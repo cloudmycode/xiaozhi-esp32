@@ -17,6 +17,8 @@
 #include <esp_lvgl_port.h>
 #include <lvgl.h>
 
+#include "bot_controller.h"
+
 
 #define TAG "LichuangDevBoard"
 
@@ -76,6 +78,9 @@ private:
     LcdDisplay* display_;
     Pca9557* pca9557_;
     Esp32Camera* camera_;
+    BotController* bot_controller_;
+
+    esp_timer_handle_t wake_word_timer_handle_;// TODO 定时测试任务
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -240,6 +245,39 @@ private:
         camera_ = new Esp32Camera(config);
     }
 
+    void InitializeBotController() {
+        bot_controller_ = BotController::GetInstance();
+        ESP_LOGI(TAG, "Bot控制器已初始化");
+    }
+
+    // 启动后执行定时测试任务
+    static void WakeWordTimerCallback(void* arg) {
+        ESP_LOGI(TAG, "你好小智，抬起左臂。");
+
+        std::string wake_word="你好小智，抬起左臂。";
+        Application::GetInstance().WakeWordInvoke(wake_word);
+        
+        // 删除定时器
+        LichuangDevBoard* board = static_cast<LichuangDevBoard*>(arg);
+        if (board->wake_word_timer_handle_) {
+            esp_timer_delete(board->wake_word_timer_handle_);
+            board->wake_word_timer_handle_ = nullptr;
+        }
+    }
+
+    void InitializeWakeWordTimer() {
+        esp_timer_create_args_t timer_args = {
+            .callback = &WakeWordTimerCallback,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "wake_word_timer",
+            .skip_unhandled_events = true
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &wake_word_timer_handle_));
+        // 改为一次性定时器，10秒后触发
+        ESP_ERROR_CHECK(esp_timer_start_once(wake_word_timer_handle_, 10000000));
+    }
+
 public:
     LichuangDevBoard() : boot_button_(BOOT_BUTTON_GPIO) {
         InitializeI2c();
@@ -248,6 +286,8 @@ public:
         InitializeTouch();
         InitializeButtons();
         InitializeCamera();
+        InitializeBotController();
+        InitializeWakeWordTimer(); // TODO 定时测试任务
 
 #if CONFIG_IOT_PROTOCOL_XIAOZHI
         auto& thing_manager = iot::ThingManager::GetInstance();
@@ -255,6 +295,14 @@ public:
         thing_manager.AddThing(iot::CreateThing("Screen"));
 #endif
         GetBacklight()->RestoreBrightness();
+        GetAudioCodec()->SetOutputVolume(1); // 设置输出音量
+    }
+
+    ~LichuangDevBoard() {
+        if (wake_word_timer_handle_) {
+            esp_timer_stop(wake_word_timer_handle_);
+            esp_timer_delete(wake_word_timer_handle_);
+        }
     }
 
     virtual AudioCodec* GetAudioCodec() override {
