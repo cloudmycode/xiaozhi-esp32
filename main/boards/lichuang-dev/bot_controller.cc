@@ -3,16 +3,11 @@
 */
 
 #include "bot_controller.h"
-// #include <cJSON.h>
 #include <esp_log.h>
-// #include <cstring>
-// #include "application.h"
-// #include "board.h"
-// #include "config.h"
 #include "mcp_server.h"
-// #include "movements.h"
-// #include "sdkconfig.h"
-// #include "settings.h"
+#include "pca9685.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define TAG "BotController"
 
@@ -21,7 +16,43 @@ BotController *BotController::instance_ = nullptr;
 
 BotController::BotController()
 {
+    ESP_LOGI(TAG, "开始初始化BotController...");
     RegisterMcpTools();
+
+    ESP_LOGI(TAG, "配置I2C总线参数...");
+    i2c_master_bus_config_t i2c_bus_cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = GPIO_NUM_10,
+        .scl_io_num = GPIO_NUM_11,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .intr_priority = 0,
+        .trans_queue_depth = 0,
+        .flags = {
+            .enable_internal_pullup = 1,
+        },
+    };
+    ESP_LOGI(TAG, "I2C配置 - 端口: %d, SDA: GPIO_%d, SCL: GPIO_%d",
+             i2c_bus_cfg.i2c_port, i2c_bus_cfg.sda_io_num, i2c_bus_cfg.scl_io_num);
+
+    i2c_master_bus_handle_t i2c_bus;
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus));
+    ESP_LOGI(TAG, "I2C总线创建成功");
+
+    ESP_LOGI(TAG, "创建PCA9685对象 - 地址: 0x40");
+    // 获取PCA9685单例实例
+    Pca9685 *pca9685 = Pca9685::GetInstance(i2c_bus, 0x40);
+
+    ESP_LOGI(TAG, "开始初始化PCA9685...");
+    // 初始化PCA9685
+    pca9685->Init();
+
+    ESP_LOGI(TAG, "开始控制舵机...");
+    // 控制舵机
+    pca9685->SetServoAngle(0, 90); // 设置通道0的舵机到90度
+    // pca9685->SetServoAngle(0, 180); // 设置通道1的舵机到45度
+
+    ESP_LOGI(TAG, "BotController初始化完成");
 }
 
 BotController::~BotController()
@@ -110,6 +141,9 @@ void BotController::RegisterMcpTools()
             int speed = properties["speed"].value<int>();
             ESP_LOGI(TAG, "左臂抬起: height: %d, speed: %d", height, speed);
 
+            Pca9685 *pca9685 = Pca9685::GetInstance(nullptr, 0x00);
+            // 控制舵机
+            pca9685->SetServoAngle(0, (float)height * 180.0f / 100.0f);
             return true;
         });
 
@@ -124,6 +158,10 @@ void BotController::RegisterMcpTools()
             int speed = properties["speed"].value<int>();
             ESP_LOGI(TAG, "右臂抬起: height: %d, speed: %d", height, speed);
 
+            Pca9685 *pca9685 = Pca9685::GetInstance(nullptr, 0x00);
+            // 控制舵机
+            pca9685->SetServoAngle(1, (float)height * 180.0f / 100.0f);
+            
             return true;
         });
 
